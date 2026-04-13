@@ -1,0 +1,48 @@
+# Copyright (c) 2024 Nils Tinner. All Rights Reserved.
+# Runs every 30 minutes: fetches Netatmo observations and regenerates the forecast.
+name: Update Weather Data
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:            # allow manual trigger from GitHub UI
+
+permissions:
+  contents: write               # needed to push docs/ changes
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Netatmo credentials come exclusively from GitHub Secrets — never from code.
+      - name: Fetch Netatmo observations
+        env:
+          NETATMO_CLIENT_ID:     ${{ secrets.NETATMO_CLIENT_ID }}
+          NETATMO_CLIENT_SECRET: ${{ secrets.NETATMO_CLIENT_SECRET }}
+          NETATMO_REFRESH_TOKEN: ${{ secrets.NETATMO_REFRESH_TOKEN }}
+          GH_PAT:                ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY:     ${{ github.repository }}
+        run: python fetch_observations.py
+
+      - name: Generate forecast
+        run: python generate_forecast.py
+
+      - name: Commit and push
+        run: |
+          git config user.name  "weather-bot"
+          git config user.email "action@github.com"
+          git add docs/
+          git diff --staged --quiet || git commit -m "Update weather data $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push

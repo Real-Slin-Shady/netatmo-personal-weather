@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Secrets — never commit these
+.env
+*.env
+secrets.py
+credentials.json
+token.json
+
+# Local data (generated files live in docs/ and are committed by Actions)
+*.csv
+training_data*.csv
+
+# OS
+.DS_Store
+Thumbs.db

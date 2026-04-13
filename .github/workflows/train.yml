@@ -1,0 +1,39 @@
+# Copyright (c) 2024 Nils Tinner. All Rights Reserved.
+# Retrains XGBoost bias-correction models every Sunday at 03:00 UTC.
+# The first run will skip training if fewer than MIN_TRAIN_DAYS of data exist.
+name: Retrain ML Models
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'        # Sundays 03:00 UTC
+  workflow_dispatch:            # allow manual trigger from GitHub UI
+
+permissions:
+  contents: write               # needed to commit updated model files
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Train models
+        run: python train_model.py
+
+      - name: Commit model files
+        run: |
+          git config user.name  "weather-bot"
+          git config user.email "action@github.com"
+          git add models/
+          git diff --staged --quiet || git commit -m "Retrain models $(date -u '+%Y-%m-%d')"
+          git push
