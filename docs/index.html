@@ -362,7 +362,7 @@
             <div class="chart-card">
                 <div class="chart-title">
                     <i class="wi wi-thermometer"></i> Temperature (Observed + Forecast)
-                    <button id="rawToggle" onclick="toggleRawForecast()" class="raw-toggle-btn">Raw Forecast</button>
+                    <button id="rawToggle" onclick="toggleRawForecast()" class="raw-toggle-btn">ICON Bias</button>
                 </div>
                 <div class="chart-container"><canvas id="tempChart"></canvas></div>
             </div>
@@ -515,7 +515,7 @@
     function toggleRawForecast() {
         showRawForecast = !showRawForecast;
         const btn = document.getElementById('rawToggle');
-        btn.textContent = showRawForecast ? 'Debiased' : 'Raw Forecast';
+        btn.textContent = showRawForecast ? 'Temperature' : 'ICON Bias';
         btn.classList.toggle('active', showRawForecast);
         renderCharts();
     }
@@ -917,11 +917,9 @@
         const gridColor = dark ? lipari[2] : lipari[7];
         const now       = new Date();
 
-        const fcSampled   = forecastData.hourly.filter((_, i) => i % 2 === 0);
-        const fcTimes     = fcSampled.map(h => new Date(h.time));
-        const fcTemps     = fcSampled.map(h => showRawForecast ? h.raw.temperature : h.debiased.temperature);
-        const fcHumidity  = fcSampled.map(h => showRawForecast ? h.raw.humidity    : h.debiased.humidity);
-        const fcPrecip    = fcSampled.map(h => h.debiased.rain);
+        const fcSampled = forecastData.hourly.filter((_, i) => i % 2 === 0);
+        const fcTimes   = fcSampled.map(h => new Date(h.time));
+        const fcPrecip  = fcSampled.map(h => h.debiased.rain);
 
         const fiveDaysAgo = new Date(); fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
         let obsTimes = [], obsTemps = [], obsPrecip = [], obsHumidity = [], obsWind = [];
@@ -937,75 +935,141 @@
         const xMin = fiveDaysAgo;
         const xMax = fcTimes.length > 0 ? fcTimes[fcTimes.length-1] : new Date();
 
-        // ── Temperature + Humidity chart ──
-        const unifiedTemp = [], unifiedHum = [];
-        obsTimes.forEach((t, i) => {
-            if (t <= now && obsTemps[i]    !== null) unifiedTemp.push({ x: t, y: obsTemps[i] });
-            if (t <= now && obsHumidity[i] !== null) unifiedHum.push({ x: t, y: obsHumidity[i] });
-        });
-        fcTimes.forEach((t, i) => {
-            if (t > now) {
-                unifiedTemp.push({ x: t, y: fcTemps[i] });
-                unifiedHum.push({ x: t, y: fcHumidity[i] });
-            }
-        });
-        unifiedTemp.sort((a,b) => a.x - b.x);
-        unifiedHum.sort((a,b)  => a.x - b.x);
-
-        const tempDatasets = [
-            { label: showRawForecast ? 'Temperature (Raw)' : 'Temperature',
-              data: unifiedTemp, borderColor: '#B96628', backgroundColor: '#B9662825',
-              borderWidth: 2.5, tension: 0.4, fill: true, pointRadius: 0, yAxisID: 'y' },
-            { label: showRawForecast ? 'Humidity (Raw)' : 'Humidity',
-              data: unifiedHum, borderColor: '#5369A5', backgroundColor: '#5369A512',
-              borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0, yAxisID: 'y1' },
-        ];
-
-        if (forecastHistoryData?.hourly) {
-            const hist = forecastHistoryData.hourly.filter(h => {
-                const t = new Date(h.time); return t >= fiveDaysAgo && t <= now;
-            });
-            const histTemp = hist.map(h => ({ x: new Date(h.time), y: h.temperature }));
-            const histHum  = hist.map(h => ({ x: new Date(h.time), y: h.humidity }));
-            if (histTemp.length > 0) tempDatasets.push({
-                label: 'Temp Fc', data: histTemp, borderColor: '#D9A16470', backgroundColor: 'transparent',
-                borderWidth: 1.5, borderDash: [4,4], tension: 0.4, fill: false, pointRadius: 0, yAxisID: 'y'
-            });
-            if (histHum.length  > 0) tempDatasets.push({
-                label: 'Humidity Fc', data: histHum, borderColor: '#8FACD470', backgroundColor: 'transparent',
-                borderWidth: 1.5, borderDash: [4,4], tension: 0.4, fill: false, pointRadius: 0, yAxisID: 'y1'
-            });
-        }
-
+        // ── Temperature chart ──
         const ctxT = document.getElementById('tempChart').getContext('2d');
         if (tempChart) tempChart.destroy();
-        tempChart = new Chart(ctxT, {
-            type: 'line', data: { datasets: tempDatasets }, plugins: [nowLinePlugin],
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
-                    tooltip: {
-                        backgroundColor: 'rgba(27,17,69,0.9)', titleFont:{size:13}, bodyFont:{size:12}, padding:12,
-                        callbacks: {
-                            title: items => {
-                                if (!items.length) return '';
-                                const d = new Date(items[0].parsed.x);
-                                return (d <= now ? '(Observed) ' : '(Forecast) ') +
-                                    d.toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-                            },
-                            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}${ctx.dataset.yAxisID === 'y1' ? '%' : '°C'}`
-                        }
+
+        if (showRawForecast) {
+            // ICON BIAS MODE: raw − local product (past = raw − observed, future = raw − debiased)
+            const biasPoints = [];
+
+            if (forecastHistoryData?.hourly) {
+                const obsHourIndex = {};
+                obsTimes.forEach((t, i) => {
+                    if (obsTemps[i] !== null) {
+                        const key = new Date(t.getFullYear(), t.getMonth(), t.getDate(), t.getHours()).getTime();
+                        if (!(key in obsHourIndex)) obsHourIndex[key] = obsTemps[i];
                     }
-                },
-                scales: {
-                    x:  { type:'time', min:xMin, max:xMax, time:{unit:'day',displayFormats:{day:'EEE'}}, grid:{display:false} },
-                    y:  { position:'left',  grid:{color:gridColor}, title:{display:true,text:'°C',font:{size:11},color:'#B96628'} },
-                    y1: { position:'right', min:0, max:100, grid:{display:false}, title:{display:true,text:'Humidity %',font:{size:11},color:'#5369A5'} }
+                });
+                for (const h of forecastHistoryData.hourly) {
+                    const t = new Date(h.time);
+                    if (t < fiveDaysAgo || t > now || h.raw_temperature == null) continue;
+                    const key = new Date(t.getFullYear(), t.getMonth(), t.getDate(), t.getHours()).getTime();
+                    const obs = obsHourIndex[key];
+                    if (obs != null) biasPoints.push({ x: t, y: +(h.raw_temperature - obs).toFixed(2) });
                 }
             }
-        });
+
+            for (const h of forecastData.hourly) {
+                const t = new Date(h.time);
+                if (t > now && h.raw?.temperature != null && h.debiased?.temperature != null)
+                    biasPoints.push({ x: t, y: +(h.raw.temperature - h.debiased.temperature).toFixed(2) });
+            }
+            biasPoints.sort((a, b) => a.x - b.x);
+
+            tempChart = new Chart(ctxT, {
+                type: 'line',
+                data: { datasets: [{ label: 'ICON − Local (°C)', data: biasPoints,
+                    borderColor: '#B96628', borderWidth: 1.5, tension: 0.3, pointRadius: 0,
+                    fill: { target: 'origin', above: 'rgba(185,102,40,0.35)', below: 'rgba(83,105,165,0.35)' }
+                }] },
+                plugins: [nowLinePlugin],
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                        tooltip: {
+                            backgroundColor: 'rgba(27,17,69,0.9)', titleFont:{size:13}, bodyFont:{size:12}, padding:12,
+                            callbacks: {
+                                title: items => {
+                                    if (!items.length) return '';
+                                    const d = new Date(items[0].parsed.x);
+                                    return (d <= now ? '(Past) ' : '(Future) ') +
+                                        d.toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+                                },
+                                label: ctx => {
+                                    const v = ctx.parsed.y;
+                                    return `ICON bias: ${v >= 0 ? '+' : ''}${v.toFixed(1)}°C (ICON ${v >= 0 ? 'too warm' : 'too cold'})`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { type:'time', min:xMin, max:xMax, time:{unit:'day',displayFormats:{day:'EEE'}}, grid:{display:false} },
+                        y: { position:'left', grid:{color:gridColor},
+                            title:{display:true,text:'ICON − Local (°C)',font:{size:11}},
+                            ticks:{ callback: v => (v >= 0 ? '+' : '') + v.toFixed(1) + '°' } }
+                    }
+                }
+            });
+        } else {
+            // NORMAL MODE: observed (past) + debiased forecast (future)
+            const fcTemps    = fcSampled.map(h => h.debiased.temperature);
+            const fcHumidity = fcSampled.map(h => h.debiased.humidity);
+
+            const unifiedTemp = [], unifiedHum = [];
+            obsTimes.forEach((t, i) => {
+                if (t <= now && obsTemps[i]    !== null) unifiedTemp.push({ x: t, y: obsTemps[i] });
+                if (t <= now && obsHumidity[i] !== null) unifiedHum.push({ x: t, y: obsHumidity[i] });
+            });
+            fcTimes.forEach((t, i) => {
+                if (t > now) { unifiedTemp.push({ x: t, y: fcTemps[i] }); unifiedHum.push({ x: t, y: fcHumidity[i] }); }
+            });
+            unifiedTemp.sort((a,b) => a.x - b.x);
+            unifiedHum.sort((a,b)  => a.x - b.x);
+
+            const tempDatasets = [
+                { label: 'Temperature', data: unifiedTemp, borderColor: '#B96628', backgroundColor: '#B9662825',
+                  borderWidth: 2.5, tension: 0.4, fill: true, pointRadius: 0, yAxisID: 'y' },
+                { label: 'Humidity', data: unifiedHum, borderColor: '#5369A5', backgroundColor: '#5369A512',
+                  borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0, yAxisID: 'y1' },
+            ];
+
+            if (forecastHistoryData?.hourly) {
+                const hist = forecastHistoryData.hourly.filter(h => {
+                    const t = new Date(h.time); return t >= fiveDaysAgo && t <= now;
+                });
+                const histTemp = hist.map(h => ({ x: new Date(h.time), y: h.temperature }));
+                const histHum  = hist.map(h => ({ x: new Date(h.time), y: h.humidity }));
+                if (histTemp.length > 0) tempDatasets.push({
+                    label: 'Temp Fc', data: histTemp, borderColor: '#D9A16470', backgroundColor: 'transparent',
+                    borderWidth: 1.5, borderDash: [4,4], tension: 0.4, fill: false, pointRadius: 0, yAxisID: 'y'
+                });
+                if (histHum.length > 0) tempDatasets.push({
+                    label: 'Humidity Fc', data: histHum, borderColor: '#8FACD470', backgroundColor: 'transparent',
+                    borderWidth: 1.5, borderDash: [4,4], tension: 0.4, fill: false, pointRadius: 0, yAxisID: 'y1'
+                });
+            }
+
+            tempChart = new Chart(ctxT, {
+                type: 'line', data: { datasets: tempDatasets }, plugins: [nowLinePlugin],
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                        tooltip: {
+                            backgroundColor: 'rgba(27,17,69,0.9)', titleFont:{size:13}, bodyFont:{size:12}, padding:12,
+                            callbacks: {
+                                title: items => {
+                                    if (!items.length) return '';
+                                    const d = new Date(items[0].parsed.x);
+                                    return (d <= now ? '(Observed) ' : '(Forecast) ') +
+                                        d.toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+                                },
+                                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}${ctx.dataset.yAxisID === 'y1' ? '%' : '°C'}`
+                            }
+                        }
+                    },
+                    scales: {
+                        x:  { type:'time', min:xMin, max:xMax, time:{unit:'day',displayFormats:{day:'EEE'}}, grid:{display:false} },
+                        y:  { position:'left',  grid:{color:gridColor}, title:{display:true,text:'°C',font:{size:11},color:'#B96628'} },
+                        y1: { position:'right', min:0, max:100, grid:{display:false}, title:{display:true,text:'Humidity %',font:{size:11},color:'#5369A5'} }
+                    }
+                }
+            });
+        }
 
         // ── Precip + Wind chart ──
         const hourlyObsPrecip = {};

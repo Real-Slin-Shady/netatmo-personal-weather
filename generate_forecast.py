@@ -188,13 +188,14 @@ def update_forecast_history(hourly: list) -> None:
         if t <= now or h['time'] in existing_times:
             continue
         existing.append({
-            'time':          h['time'],
-            'temperature':   h['debiased']['temperature'],
-            'humidity':      h['debiased']['humidity'],
-            'rain':          h['debiased']['rain'],
-            'wind_speed':    h['debiased']['wind_speed'],
-            'gust_speed':    h['debiased']['gust_speed'],
-            'forecast_made': fc_made,
+            'time':            h['time'],
+            'temperature':     h['debiased']['temperature'],
+            'raw_temperature': h['raw']['temperature'],
+            'humidity':        h['debiased']['humidity'],
+            'rain':            h['debiased']['rain'],
+            'wind_speed':      h['debiased']['wind_speed'],
+            'gust_speed':      h['debiased']['gust_speed'],
+            'forecast_made':   fc_made,
         })
         existing_times.add(h['time'])
 
